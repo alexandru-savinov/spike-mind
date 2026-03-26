@@ -10,6 +10,7 @@ User → LLM (Claude via OpenRouter, tool-use) → Control Service (Python/bleak
 
 **Option A — Standalone agent** (~150 lines, `anthropic` + `bleak`). Start here.
 **Option B — MCP server** (FastMCP, any MCP client controls the robot). Future.
+**Option C — OpenClaw integration** (spike-mind as MCP server → OpenClaw as the brain). End goal.
 
 ## Tools (LLM interface)
 
@@ -52,10 +53,29 @@ nix develop
 
 **NixOS prerequisite:** `hardware.bluetooth.enable = true;` in rpi5-full config.
 
+## OpenClaw Integration
+
+End goal: OpenClaw (Claude Code on sancta-claw VPS) controls the robot via MCP.
+
+```
+User → OpenClaw (sancta-claw) → Tailscale → spike-mind MCP (rpi5) → BLE → SPIKE Hub
+```
+
+This requires Option B (MCP server) + network transport. OpenClaw already supports
+MCP servers — spike-mind just needs to be reachable over Tailscale. The MCP server
+runs on rpi5 (close to BLE hardware), OpenClaw connects remotely.
+
+Considerations:
+- MCP stdio transport is local-only — need streamable-http or SSE transport for remote
+- Tailscale provides the encrypted tunnel (no extra auth needed)
+- Latency: ~20ms Tailscale + ~90ms BLE = ~110ms per command (fine for LLM control)
+- OpenClaw's tool-use capabilities map directly to spike-mind's tool interface
+
 ## Status
 
 - [x] Research → [docs/research.md](docs/research.md)
 - [ ] Phase 1: BLE connectivity
 - [ ] Phase 2: Robot control module
-- [ ] Phase 3: LLM tool-use loop
-- [ ] Phase 4: Autonomous observe-think-act cycle
+- [ ] Phase 3: LLM tool-use loop (standalone, Option A)
+- [ ] Phase 4: MCP server (Option B)
+- [ ] Phase 5: OpenClaw integration (Option C)

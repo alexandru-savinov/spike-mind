@@ -32,7 +32,7 @@
           shellHook = ''
             echo "spike-mind dev shell"
             echo "  Python: $(python3 --version)"
-            echo "  bleak:  $(python3 -c 'import bleak; print(bleak.__version__)')"
+            echo "  bleak:  $(python3 -c 'from importlib.metadata import version; print(version("bleak"))')"
           '';
         };
       }

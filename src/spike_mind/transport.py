@@ -38,36 +38,88 @@ class BleTransport:
     """Real BLE transport using bleak.
 
     Discovers SPIKE hub by service UUID, connects, and communicates
-    via the Pybricks GATT characteristic.
+    via the Pybricks GATT characteristic. Auto-reconnects on failure
+    using exponential backoff.
     """
 
-    def __init__(self, device_address: str = "", timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        device_address: str = "",
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        backoff_base: float = 1.0,
+        connect_timeout: float = 15.0,
+    ) -> None:
         self._device_address = device_address
         self._timeout = timeout
+        self._max_retries = max_retries
+        self._backoff_base = backoff_base
+        self._connect_timeout = connect_timeout
         self._client: typing.Any = None  # BleakClient, lazily imported
+        self._address: str | None = None  # resolved address for reconnect
         self._response_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._reconnecting = False
+        self._bleak_client_cls: type | None = None
 
     async def connect(self) -> None:
         from bleak import BleakClient, BleakScanner
+        await self._connect_impl(BleakClient, BleakScanner)
 
+    async def _connect_impl(
+        self, bleak_client_cls: type, bleak_scanner_cls: type
+    ) -> None:
         if self._device_address:
-            address = self._device_address
-        else:
-            device = await BleakScanner.find_device_by_filter(
+            self._address = self._device_address
+        elif self._address is None:
+            device = await bleak_scanner_cls.find_device_by_filter(
                 lambda d, adv: SERVICE_UUID.lower() in [
                     s.lower() for s in (adv.service_uuids or [])
                 ],
-                timeout=self._timeout,
+                timeout=self._connect_timeout,
             )
             if device is None:
                 raise ConnectionError(
-                    f"No SPIKE hub found (scanned {self._timeout}s for service {SERVICE_UUID})"
+                    f"No SPIKE hub found (scanned {self._connect_timeout}s for service {SERVICE_UUID})"
                 )
-            address = device.address
+            self._address = device.address
 
-        self._client = BleakClient(address)
-        await self._client.connect()
+        self._bleak_client_cls = bleak_client_cls
+        self._client = bleak_client_cls(self._address)
+        await asyncio.wait_for(
+            self._client.connect(), timeout=self._connect_timeout
+        )
         await self._client.start_notify(CHAR_UUID, self._on_notification)
+
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect with exponential backoff."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            # Clean up old client
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+                self._client = None
+
+            for attempt in range(self._max_retries):
+                delay = self._backoff_base * (2 ** attempt)
+                await asyncio.sleep(delay)
+                try:
+                    if self._bleak_client_cls is not None:
+                        await self._connect_impl(self._bleak_client_cls, type(None))
+                    else:
+                        await self.connect()
+                    return  # success
+                except Exception:
+                    if attempt == self._max_retries - 1:
+                        raise ConnectionError(
+                            f"BLE reconnect failed after {self._max_retries} attempts"
+                        )
+        finally:
+            self._reconnecting = False
 
     def _on_notification(self, _sender: int, data: bytearray) -> None:
         """Handle BLE notifications from the hub."""
@@ -81,15 +133,27 @@ class BleTransport:
 
     async def send(self, data: bytes) -> None:
         if not self._client or not self._client.is_connected:
-            raise ConnectionError("Not connected")
-        await self._client.write_gatt_char(
-            CHAR_UUID, PYBRICKS_WRITE_STDIN + data, response=False
-        )
+            raise ConnectionError("BLE disconnected, reconnecting...")
+        try:
+            await self._client.write_gatt_char(
+                CHAR_UUID, PYBRICKS_WRITE_STDIN + data, response=False
+            )
+        except Exception:
+            await self._reconnect()
+            raise ConnectionError(
+                "BLE disconnected during send, reconnecting... retry the command"
+            )
 
     async def receive(self) -> bytes:
-        return await asyncio.wait_for(
-            self._response_queue.get(), timeout=self._timeout
-        )
+        try:
+            return await asyncio.wait_for(
+                self._response_queue.get(), timeout=self._timeout
+            )
+        except Exception:
+            await self._reconnect()
+            raise ConnectionError(
+                "BLE disconnected during receive, reconnecting... retry the command"
+            )
 
 
 class MockTransport:

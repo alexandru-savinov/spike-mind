@@ -25,12 +25,12 @@ Make the robot agent resilient to BLE disconnects via auto-reconnect with config
 - Modify: `src/spike_mind/transport.py`
 - Modify: `config.toml`
 
-- [ ] Add `[ble.retry]` section to config.toml with `max_retries` (default 3), `backoff_base` (default 1.0s), and `connect_timeout` (default 15.0s)
-- [ ] Add reconnect logic to BleTransport: on send/receive failure, attempt auto-reconnect in background using exponential backoff up to max_retries
-- [ ] On disconnect during a command, raise a descriptive error (e.g. "BLE disconnected, reconnecting...") so execute_tool surfaces it to the agent as a tool error result; the next command should work if reconnect succeeded
-- [ ] Add BleTransport constructor parameter for retry config (max_retries, backoff_base, connect_timeout) read from config
-- [ ] Write tests: mock bleak internals to simulate disconnect during send/receive, verify reconnect attempts, verify error surfaced, verify next call succeeds after reconnect
-- [ ] Run project test suite - must pass before task 2
+- [x] Add `[ble.retry]` section to config.toml with `max_retries` (default 3), `backoff_base` (default 1.0s), and `connect_timeout` (default 15.0s)
+- [x] Add reconnect logic to BleTransport: on send/receive failure, attempt auto-reconnect in background using exponential backoff up to max_retries
+- [x] On disconnect during a command, raise a descriptive error (e.g. "BLE disconnected, reconnecting...") so execute_tool surfaces it to the agent as a tool error result; the next command should work if reconnect succeeded
+- [x] Add BleTransport constructor parameter for retry config (max_retries, backoff_base, connect_timeout) read from config
+- [x] Write tests: mock bleak internals to simulate disconnect during send/receive, verify reconnect attempts, verify error surfaced, verify next call succeeds after reconnect
+- [x] Run project test suite - must pass before task 2
 
 ### Task 2: Improve MockTransport realism - obstacles, colors, noise
 

@@ -31,6 +31,7 @@
           packages = [
             python
             pkgs.python3Packages.pytest
+            pkgs.pipx
           ]
           ++ pkgs.lib.optionals isLinux [ pkgs.bluez ];
 

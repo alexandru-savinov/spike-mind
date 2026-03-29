@@ -148,6 +148,9 @@ class MockTransport:
         elif cmd == Command.TURRET:
             self._turret_angle += value
 
+        elif cmd == Command.HEAD_TILT:
+            pass  # Simulate tilt (no position change)
+
         # Build response
         state = SensorState(
             distance_cm=self._mock_distance(),

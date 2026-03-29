@@ -13,6 +13,7 @@ from spike_mind.transport import Transport
 MAX_DISTANCE_MM = 500.0
 MAX_TURN_DEGREES = 360.0
 MAX_TURRET_DEGREES = 180.0
+MAX_HEAD_TILT_DEGREES = 90.0
 
 # Color ID -> name mapping (matches hub/main.py COLOR_MAP)
 COLOR_NAMES = {
@@ -88,6 +89,13 @@ class Robot:
         # Return turret to center
         await self._command(Command.TURRET, 0)
         return {"readings": readings}
+
+    async def head_tilt(self, angle_degrees: float) -> dict:
+        """Tilt head and arm by angle_degrees. Positive = up, negative = down."""
+        if abs(angle_degrees) > MAX_HEAD_TILT_DEGREES:
+            raise ValueError(f"Angle {angle_degrees}° exceeds max {MAX_HEAD_TILT_DEGREES}°")
+        state = await self._command(Command.HEAD_TILT, angle_degrees)
+        return {"heading": state.heading, "tilt_angle": angle_degrees}
 
     async def follow_line(self, speed: float, duration_s: float) -> dict:
         """Follow line for duration_s seconds. Simplified: just move forward."""

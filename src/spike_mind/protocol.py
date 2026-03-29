@@ -33,6 +33,7 @@ class Command(IntEnum):
     READ_DISTANCE = 4  # value: ignored
     READ_COLOR = 5     # value: ignored
     TURRET = 6         # value: angle in degrees
+    HEAD_TILT = 7      # value: angle in degrees (also moves arm)
 
 
 @dataclass(frozen=True, slots=True)

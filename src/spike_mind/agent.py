@@ -15,10 +15,10 @@ from spike_mind.robot import Robot
 
 SYSTEM_PROMPT = """\
 You are controlling a LEGO SPIKE Prime robot via tool calls. The robot has:
-- Differential drive (two wheel motors)
-- Ultrasonic distance sensor on a rotating turret (4-200cm range)
-- Color sensor (detects: black, blue, green, yellow, red, white, orange, violet)
-- Force sensor (bumper)
+- Differential drive (two wheel motors: left on A, right on E)
+- Ultrasonic distance sensor (port D), mounted on rotating head (port B)
+- Color sensor (port C, detects: black, blue, green, yellow, red, white, orange, violet)
+- Head tilt + arm motor (port F) — tilts head up/down and moves arm
 - Gyro/IMU for heading
 
 Safety rules:
@@ -82,6 +82,20 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "head_tilt",
+        "description": "Tilt the head and arm by the given angle in degrees. Positive = tilt up, negative = tilt down. Max 90 degrees.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "angle_degrees": {
+                    "type": "number",
+                    "description": "Angle to tilt in degrees (-90 to 90)",
+                }
+            },
+            "required": ["angle_degrees"],
+        },
+    },
+    {
         "name": "follow_line",
         "description": "Follow a line on the ground for the given duration. Speed is in cm/s.",
         "input_schema": {
@@ -117,6 +131,8 @@ async def execute_tool(robot: Robot, name: str, args: dict[str, Any]) -> str:
             result = await robot.read_color()
         elif name == "scan_surroundings":
             result = await robot.scan_surroundings()
+        elif name == "head_tilt":
+            result = await robot.head_tilt(args["angle_degrees"])
         elif name == "follow_line":
             result = await robot.follow_line(args["speed"], args["duration_s"])
         else:

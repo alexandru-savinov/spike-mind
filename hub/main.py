@@ -8,18 +8,18 @@ Response format: struct.pack("!fffff", dist_cm, heading, pitch, roll, left_angle
 
 Port assignments:
   A = left wheel motor
-  B = right wheel motor
-  C = turret motor (for ultrasonic sweep)
+  B = head rotation motor
+  C = color sensor
   D = ultrasonic sensor
-  E = color sensor
-  F = force sensor (bumper)
+  E = right wheel motor
+  F = head tilt + arm motor
 """
 
 import ustruct
 from micropython import kbd_intr
 from pybricks.hubs import PrimeHub
 from pybricks.parameters import Port, Color
-from pybricks.pupdevices import Motor, UltrasonicSensor, ColorSensor, ForceSensor
+from pybricks.pupdevices import Motor, UltrasonicSensor, ColorSensor
 from pybricks.robotics import DriveBase
 from pybricks.tools import wait, StopWatch
 from uselect import poll
@@ -31,11 +31,11 @@ kbd_intr(-1)
 # Hardware setup
 hub = PrimeHub()
 left = Motor(Port.A)
-right = Motor(Port.B)
-turret = Motor(Port.C)
+head_rotation = Motor(Port.B)
+color_sensor = ColorSensor(Port.C)
 dist_sensor = UltrasonicSensor(Port.D)
-color_sensor = ColorSensor(Port.E)
-force_sensor = ForceSensor(Port.F)
+right = Motor(Port.E)
+head_tilt = Motor(Port.F)
 
 drive = DriveBase(left, right, wheel_diameter=56, axle_track=112)
 drive.use_gyro(True)
@@ -47,6 +47,7 @@ CMD_STOP = 3
 CMD_READ_DISTANCE = 4
 CMD_READ_COLOR = 5
 CMD_TURRET = 6
+CMD_HEAD_TILT = 7
 
 # Watchdog: stop motors if no command received within this many ms
 WATCHDOG_TIMEOUT_MS = 2000
@@ -105,7 +106,9 @@ def handle_command(cmd, value):
             float(left.angle()),
         )
     elif cmd == CMD_TURRET:
-        turret.run_angle(200, value)  # value = angle in degrees, moderate speed
+        head_rotation.run_angle(200, value)  # value = angle in degrees
+    elif cmd == CMD_HEAD_TILT:
+        head_tilt.run_angle(200, value)  # value = angle in degrees
 
     return read_sensor_state()
 
@@ -118,7 +121,8 @@ while True:
     # Watchdog: stop motors if no command received recently
     if timer.time() > WATCHDOG_TIMEOUT_MS:
         drive.stop()
-        turret.stop()
+        head_rotation.stop()
+        head_tilt.stop()
         hub.light.on(Color.ORANGE)  # Visual warning
 
     if keyboard.poll(0):

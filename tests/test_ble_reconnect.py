@@ -54,7 +54,12 @@ class TestRetryConfig:
 class TestSendDisconnect:
     @pytest.mark.asyncio
     async def test_send_raises_when_not_connected(self, transport):
-        """send() raises ConnectionError when client is None."""
+        """send() reconnects and raises ConnectionError when client is None."""
+        good_client = _make_mock_client()
+        transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
+        transport._address = "AA:BB:CC:DD:EE:FF"
+
         with pytest.raises(ConnectionError, match="disconnected"):
             await transport.send(b"\x00" * 8)
 
@@ -67,6 +72,7 @@ class TestSendDisconnect:
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
         with pytest.raises(ConnectionError, match="reconnecting"):
@@ -84,6 +90,7 @@ class TestSendDisconnect:
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
         with pytest.raises(ConnectionError):
@@ -102,6 +109,7 @@ class TestReceiveDisconnect:
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
         with pytest.raises(ConnectionError, match="reconnecting"):
@@ -118,6 +126,7 @@ class TestReconnectRetries:
         fail_client = _make_mock_client()
         fail_client.connect.side_effect = Exception("Connection failed")
         transport._bleak_client_cls = _mock_client_cls(fail_client)
+        transport._bleak_scanner_cls = type(None)
 
         with pytest.raises(ConnectionError, match="failed after 2 attempts"):
             await transport._reconnect()
@@ -141,6 +150,7 @@ class TestReconnectRetries:
             return c
 
         transport._bleak_client_cls = make_client
+        transport._bleak_scanner_cls = type(None)
 
         await transport._reconnect()
 
@@ -159,6 +169,7 @@ class TestErrorMessages:
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
         with pytest.raises(ConnectionError) as exc_info:
@@ -173,6 +184,7 @@ class TestErrorMessages:
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
+        transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
         with pytest.raises(ConnectionError) as exc_info:

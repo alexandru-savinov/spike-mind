@@ -45,9 +45,13 @@ def make_transport(config: dict):
         return MockTransport()
     elif transport_type == "ble":
         ble_config = config.get("ble", {})
+        retry_config = ble_config.get("retry", {})
         return BleTransport(
             device_address=ble_config.get("device_address", ""),
             timeout=float(ble_config.get("timeout", 10.0)),
+            max_retries=int(retry_config.get("max_retries", 3)),
+            backoff_base=float(retry_config.get("backoff_base", 1.0)),
+            connect_timeout=float(retry_config.get("connect_timeout", 15.0)),
         )
     else:
         print(f"Unknown transport type: {transport_type}", file=sys.stderr)

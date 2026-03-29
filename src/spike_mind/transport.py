@@ -61,6 +61,7 @@ class BleTransport:
         self._response_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._reconnecting = False
         self._bleak_client_cls: type | None = None
+        self._bleak_scanner_cls: type | None = None
 
     async def connect(self) -> None:
         from bleak import BleakClient, BleakScanner
@@ -85,6 +86,7 @@ class BleTransport:
             self._address = device.address
 
         self._bleak_client_cls = bleak_client_cls
+        self._bleak_scanner_cls = bleak_scanner_cls
         self._client = bleak_client_cls(self._address)
         await asyncio.wait_for(
             self._client.connect(), timeout=self._connect_timeout
@@ -109,8 +111,8 @@ class BleTransport:
                 delay = self._backoff_base * (2 ** attempt)
                 await asyncio.sleep(delay)
                 try:
-                    if self._bleak_client_cls is not None:
-                        await self._connect_impl(self._bleak_client_cls, type(None))
+                    if self._bleak_client_cls is not None and self._bleak_scanner_cls is not None:
+                        await self._connect_impl(self._bleak_client_cls, self._bleak_scanner_cls)
                     else:
                         await self.connect()
                     return  # success
@@ -134,7 +136,8 @@ class BleTransport:
 
     async def send(self, data: bytes) -> None:
         if not self._client or not self._client.is_connected:
-            raise ConnectionError("BLE disconnected, reconnecting...")
+            await self._reconnect()
+            raise ConnectionError("BLE disconnected, reconnected... retry the command")
         try:
             await self._client.write_gatt_char(
                 CHAR_UUID, PYBRICKS_WRITE_STDIN + data, response=False
@@ -150,7 +153,7 @@ class BleTransport:
             return await asyncio.wait_for(
                 self._response_queue.get(), timeout=self._timeout
             )
-        except Exception:
+        except asyncio.TimeoutError:
             await self._reconnect()
             raise ConnectionError(
                 "BLE disconnected during receive, reconnecting... retry the command"
@@ -221,7 +224,7 @@ class MockTransport:
             pass  # Handled in response building below
 
         elif cmd == Command.TURRET:
-            self._turret_angle += value
+            self._turret_angle = value
 
         elif cmd == Command.HEAD_TILT:
             pass  # Simulate tilt (no position change)
@@ -237,9 +240,10 @@ class MockTransport:
         tilt_roll = 0.0
         left_angle = self._left_angle
 
-        # Apply noise if configured
+        # Apply noise if configured (skip distance_field for color reads — it's a categorical ID)
         if self._noise > 0:
-            distance_field += self._rng.gauss(0, self._noise)
+            if cmd != Command.READ_COLOR:
+                distance_field += self._rng.gauss(0, self._noise)
             heading += self._rng.gauss(0, self._noise)
             tilt_pitch += self._rng.gauss(0, self._noise)
             tilt_roll += self._rng.gauss(0, self._noise)

@@ -64,6 +64,6 @@ Make the robot agent resilient to BLE disconnects via auto-reconnect with config
 
 ### Task 5: Update documentation
 
-- [ ] Update README.md with BLE retry config section and MockTransport obstacle/color/noise parameters
-- [ ] Update CLAUDE.md if internal patterns changed
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update README.md with BLE retry config section and MockTransport obstacle/color/noise parameters
+- [x] Update CLAUDE.md if internal patterns changed (N/A - no CLAUDE.md exists)
+- [x] Move this plan to `docs/plans/completed/`

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import typing
 
 from spike_mind.protocol import (
@@ -163,7 +164,12 @@ class MockTransport:
     Useful for developing and testing the agent loop without hardware.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        obstacles: list[tuple[float, float, float]] | None = None,
+        color_zones: list[tuple[float, float, float, int]] | None = None,
+        noise: float = 0.0,
+    ) -> None:
         self._connected = False
         # Simulated robot state
         self._x = 0.0          # position in mm
@@ -172,6 +178,11 @@ class MockTransport:
         self._left_angle = 0.0 # encoder degrees
         self._turret_angle = 0.0
         self._response_buf: bytes = b""
+        # Environment simulation
+        self._obstacles = obstacles or []  # (x, y, radius) in mm
+        self._color_zones = color_zones or []  # (x, y, radius, color_id) in mm
+        self._noise = noise
+        self._rng = random.Random(42)  # deterministic by default
 
     async def connect(self) -> None:
         self._connected = True
@@ -207,7 +218,7 @@ class MockTransport:
             pass  # Just return state
 
         elif cmd == Command.READ_COLOR:
-            pass  # Return state with mock color (0.0 = none)
+            pass  # Handled in response building below
 
         elif cmd == Command.TURRET:
             self._turret_angle += value
@@ -216,12 +227,30 @@ class MockTransport:
             pass  # Simulate tilt (no position change)
 
         # Build response
+        if cmd == Command.READ_COLOR:
+            distance_field = float(self._mock_color_id())
+        else:
+            distance_field = self._mock_distance()
+
+        heading = self._heading
+        tilt_pitch = 0.0
+        tilt_roll = 0.0
+        left_angle = self._left_angle
+
+        # Apply noise if configured
+        if self._noise > 0:
+            distance_field += self._rng.gauss(0, self._noise)
+            heading += self._rng.gauss(0, self._noise)
+            tilt_pitch += self._rng.gauss(0, self._noise)
+            tilt_roll += self._rng.gauss(0, self._noise)
+            left_angle += self._rng.gauss(0, self._noise)
+
         state = SensorState(
-            distance_cm=self._mock_distance(),
-            heading=self._heading,
-            tilt_pitch=0.0,
-            tilt_roll=0.0,
-            left_angle=self._left_angle,
+            distance_cm=distance_field,
+            heading=heading,
+            tilt_pitch=tilt_pitch,
+            tilt_roll=tilt_roll,
+            left_angle=left_angle,
         )
         import struct as s
         self._response_buf = s.pack(
@@ -241,10 +270,51 @@ class MockTransport:
         return data
 
     def _mock_distance(self) -> float:
-        """Simulate ultrasonic sensor: return 100cm unless near origin."""
-        dist_from_origin = math.sqrt(self._x ** 2 + self._y ** 2)
-        # Simulate: closer to origin = closer to a wall
-        return min(200.0, max(4.0, 100.0 - dist_from_origin / 10))
+        """Simulate ultrasonic sensor: distance to nearest obstacle along heading.
+
+        If obstacles are configured, casts a ray from the robot position along
+        the current heading (plus turret angle) and returns the distance to the
+        nearest obstacle surface in cm. Otherwise falls back to the simple
+        origin-based distance model.
+        """
+        if not self._obstacles:
+            dist_from_origin = math.sqrt(self._x ** 2 + self._y ** 2)
+            return min(200.0, max(4.0, 100.0 - dist_from_origin / 10))
+
+        ray_angle = math.radians(self._heading + self._turret_angle)
+        dx = math.cos(ray_angle)
+        dy = math.sin(ray_angle)
+        min_dist_cm = 200.0  # max sensor range
+
+        for ox, oy, r in self._obstacles:
+            # Vector from robot to obstacle center
+            fx = self._x - ox
+            fy = self._y - oy
+            a = dx * dx + dy * dy  # always 1 for unit direction
+            b = 2 * (fx * dx + fy * dy)
+            c = fx * fx + fy * fy - r * r
+            discriminant = b * b - 4 * a * c
+            if discriminant < 0:
+                continue  # ray misses obstacle
+            sqrt_disc = math.sqrt(discriminant)
+            t1 = (-b - sqrt_disc) / (2 * a)
+            t2 = (-b + sqrt_disc) / (2 * a)
+            # Take the nearest positive intersection (in front of robot)
+            t = t1 if t1 > 0 else t2
+            if t > 0:
+                dist_cm = t / 10.0  # mm to cm
+                min_dist_cm = min(min_dist_cm, dist_cm)
+
+        return max(4.0, min_dist_cm)
+
+    def _mock_color_id(self) -> int:
+        """Return color_id based on robot position within color zones."""
+        for zx, zy, zr, color_id in self._color_zones:
+            dx = self._x - zx
+            dy = self._y - zy
+            if dx * dx + dy * dy <= zr * zr:
+                return color_id
+        return 0  # no color
 
     @property
     def position(self) -> tuple[float, float]:

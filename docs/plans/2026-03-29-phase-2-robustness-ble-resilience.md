@@ -37,12 +37,12 @@ Make the robot agent resilient to BLE disconnects via auto-reconnect with config
 **Files:**
 - Modify: `src/spike_mind/transport.py`
 
-- [ ] Add an `obstacles` parameter to MockTransport: list of (x, y, radius) tuples representing circular obstacles; ultrasonic distance should return distance to nearest obstacle surface along current heading (not just distance from origin)
-- [ ] Add a `color_zones` parameter: list of (x, y, radius, color_id) tuples; READ_COLOR returns the color_id if robot position is within a zone, else 0 (no color)
-- [ ] Add a `noise` parameter (float, default 0.0): when > 0, add Gaussian noise scaled by this factor to all sensor readings (distance, heading, pitch, roll, motor angle)
-- [ ] Update existing tests to pass with new defaults (obstacles=[], color_zones=[], noise=0.0 preserves current behavior)
-- [ ] Write tests: place obstacles and verify distance readings change with heading, place color zones and verify color detection, enable noise and verify readings vary within expected range
-- [ ] Run project test suite - must pass before task 3
+- [x] Add an `obstacles` parameter to MockTransport: list of (x, y, radius) tuples representing circular obstacles; ultrasonic distance should return distance to nearest obstacle surface along current heading (not just distance from origin)
+- [x] Add a `color_zones` parameter: list of (x, y, radius, color_id) tuples; READ_COLOR returns the color_id if robot position is within a zone, else 0 (no color)
+- [x] Add a `noise` parameter (float, default 0.0): when > 0, add Gaussian noise scaled by this factor to all sensor readings (distance, heading, pitch, roll, motor angle)
+- [x] Update existing tests to pass with new defaults (obstacles=[], color_zones=[], noise=0.0 preserves current behavior)
+- [x] Write tests: place obstacles and verify distance readings change with heading, place color zones and verify color detection, enable noise and verify readings vary within expected range
+- [x] Run project test suite - must pass before task 3
 
 ### Task 3: Integration test - agent loop against mock for N turns
 

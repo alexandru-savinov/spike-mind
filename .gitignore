@@ -3,3 +3,6 @@ result
 __pycache__/
 *.pyc
 .mypy_cache/
+
+# ralphex progress logs
+.ralphex/progress/

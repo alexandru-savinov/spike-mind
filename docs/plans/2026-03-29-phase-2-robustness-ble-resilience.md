@@ -50,11 +50,11 @@ Make the robot agent resilient to BLE disconnects via auto-reconnect with config
 - Create: `tests/test_integration.py`
 - Modify: `src/spike_mind/agent.py` (only if needed for testability)
 
-- [ ] Create integration test that sets up MockTransport with obstacles and color zones, creates Robot, and runs run_agent() with a simple exploration prompt for a configurable number of turns (default 20)
-- [ ] Verify the agent completes without raising exceptions, uses multiple tool types, and produces a final text response
-- [ ] Add a longer-running stress test (marked with pytest.mark.slow) that runs the agent loop for max_turns=100 to approximate sustained sessions; verify no errors accumulate
-- [ ] Write a test for the error-surfacing path: use a mock transport that fails once mid-session, verify the agent receives the error and continues
-- [ ] Run project test suite - must pass before task 4
+- [x] Create integration test that sets up MockTransport with obstacles and color zones, creates Robot, and runs run_agent() with a simple exploration prompt for a configurable number of turns (default 20)
+- [x] Verify the agent completes without raising exceptions, uses multiple tool types, and produces a final text response
+- [x] Add a longer-running stress test (marked with pytest.mark.slow) that runs the agent loop for max_turns=100 to approximate sustained sessions; verify no errors accumulate
+- [x] Write a test for the error-surfacing path: use a mock transport that fails once mid-session, verify the agent receives the error and continues
+- [x] Run project test suite - must pass before task 4
 
 ### Task 4: Verify acceptance criteria
 

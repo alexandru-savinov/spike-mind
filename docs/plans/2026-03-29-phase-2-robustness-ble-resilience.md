@@ -58,9 +58,9 @@ Make the robot agent resilient to BLE disconnects via auto-reconnect with config
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] Run full test suite: `python -m pytest tests/ -v`
-- [ ] Run linter if configured
-- [ ] Verify all new tests pass including slow integration tests: `python -m pytest tests/ -v -m slow`
+- [x] Run full test suite: `python -m pytest tests/ -v`
+- [x] Run linter if configured
+- [x] Verify all new tests pass including slow integration tests: `python -m pytest tests/ -v -m slow`
 
 ### Task 5: Update documentation
 

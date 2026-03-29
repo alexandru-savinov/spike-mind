@@ -104,15 +104,15 @@ class TestSendDisconnect:
 class TestReceiveDisconnect:
     @pytest.mark.asyncio
     async def test_receive_timeout_triggers_reconnect(self, transport):
-        """When receive times out, transport reconnects then raises."""
-        transport._client = _make_mock_client()
+        """When receive times out and BLE is disconnected, transport reconnects then raises."""
+        transport._client = _make_mock_client(is_connected=False)
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
         transport._bleak_scanner_cls = type(None)
         transport._address = "AA:BB:CC:DD:EE:FF"
 
-        with pytest.raises(ConnectionError, match="reconnecting"):
+        with pytest.raises(ConnectionError, match="reconnect"):
             await transport.receive()
 
 
@@ -180,7 +180,7 @@ class TestErrorMessages:
     @pytest.mark.asyncio
     async def test_receive_error_is_descriptive(self, transport):
         """Error message mentions BLE disconnect and reconnecting."""
-        transport._client = _make_mock_client()
+        transport._client = _make_mock_client(is_connected=False)
 
         good_client = _make_mock_client()
         transport._bleak_client_cls = _mock_client_cls(good_client)
@@ -190,4 +190,4 @@ class TestErrorMessages:
         with pytest.raises(ConnectionError) as exc_info:
             await transport.receive()
         assert "BLE disconnected" in str(exc_info.value)
-        assert "reconnecting" in str(exc_info.value)
+        assert "reconnect" in str(exc_info.value)

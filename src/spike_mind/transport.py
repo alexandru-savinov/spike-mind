@@ -106,6 +106,9 @@ class BleTransport:
                 except Exception:
                     pass
                 self._client = None
+            # Drain stale notifications from the old connection
+            while not self._response_queue.empty():
+                self._response_queue.get_nowait()
 
             for attempt in range(self._max_retries):
                 delay = self._backoff_base * (2 ** attempt)
@@ -154,9 +157,13 @@ class BleTransport:
                 self._response_queue.get(), timeout=self._timeout
             )
         except asyncio.TimeoutError:
+            if self._client and self._client.is_connected:
+                raise TimeoutError(
+                    f"No response within {self._timeout}s (connection still active)"
+                )
             await self._reconnect()
             raise ConnectionError(
-                "BLE disconnected during receive, reconnecting... retry the command"
+                "BLE disconnected during receive, reconnected... retry the command"
             )
 
 

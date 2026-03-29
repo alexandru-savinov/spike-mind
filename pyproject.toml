@@ -1,0 +1,26 @@
+[project]
+name = "spike-mind"
+version = "0.1.0"
+description = "LLM-controlled LEGO SPIKE Prime robot via BLE"
+requires-python = ">=3.11"
+dependencies = [
+    "bleak>=0.21",
+    "anthropic>=0.39",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+spike-mind = "spike_mind.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -16,23 +16,29 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        isLinux = pkgs.stdenv.isLinux;
         python = pkgs.python3.withPackages (
           ps: with ps; [
-            bleak # BLE client — talks to SPIKE hub
+            bleak
+            anthropic
+            pytest-asyncio
           ]
+          ++ pkgs.lib.optionals isLinux [ ps.dbus-next ]
         );
       in
       {
         devShells.default = pkgs.mkShell {
           packages = [
             python
-            pkgs.bluez # Bluetooth stack
-          ];
+            pkgs.python3Packages.pytest
+          ]
+          ++ pkgs.lib.optionals isLinux [ pkgs.bluez ];
 
           shellHook = ''
             echo "spike-mind dev shell"
             echo "  Python: $(python3 --version)"
             echo "  bleak:  $(python3 -c 'from importlib.metadata import version; print(version("bleak"))')"
+            export PYTHONPATH="$PWD/src:$PYTHONPATH"
           '';
         };
       }

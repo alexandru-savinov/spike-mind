@@ -1,0 +1,10 @@
+[transport]
+type = "ble"  # "ble" | "mock"
+
+[ble]
+device_address = ""  # blank = auto-scan by service UUID
+service_uuid = "c5f50001-8280-46da-89f4-6d8051e4aeef"
+char_uuid = "c5f50002-8280-46da-89f4-6d8051e4aeef"
+
+[agent]
+model = "claude-sonnet-4-20250514"

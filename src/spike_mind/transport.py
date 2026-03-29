@@ -111,8 +111,9 @@ class BleTransport:
                 self._response_queue.get_nowait()
 
             for attempt in range(self._max_retries):
-                delay = self._backoff_base * (2 ** attempt)
-                await asyncio.sleep(delay)
+                if attempt > 0:
+                    delay = self._backoff_base * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
                 try:
                     if self._bleak_client_cls is not None and self._bleak_scanner_cls is not None:
                         await self._connect_impl(self._bleak_client_cls, self._bleak_scanner_cls)

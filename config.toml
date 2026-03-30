@@ -6,5 +6,10 @@ device_address = ""  # blank = auto-scan by service UUID
 service_uuid = "c5f50001-8280-46da-89f4-6d8051e4aeef"
 char_uuid = "c5f50002-8280-46da-89f4-6d8051e4aeef"
 
+[ble.retry]
+max_retries = 3
+backoff_base = 1.0   # seconds; exponential: backoff_base * 2^attempt
+connect_timeout = 15.0  # seconds
+
 [agent]
 model = "claude-sonnet-4-20250514"

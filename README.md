@@ -26,8 +26,10 @@ hub/
   main.py         MicroPython for Pybricks (runs on SPIKE Prime hub)
 
 tests/
-  test_protocol.py    Protocol encode/decode tests
-  test_robot.py       Robot API tests against MockTransport
+  test_protocol.py        Protocol encode/decode tests
+  test_robot.py           Robot API tests against MockTransport
+  test_ble_reconnect.py   BLE auto-reconnect tests
+  test_integration.py     Agent loop integration tests
 ```
 
 ## Tools (LLM interface)
@@ -70,11 +72,28 @@ device_address = ""  # blank = auto-scan by service UUID
 service_uuid = "c5f50001-8280-46da-89f4-6d8051e4aeef"
 char_uuid = "c5f50002-8280-46da-89f4-6d8051e4aeef"
 
+[ble.retry]
+max_retries = 3        # reconnect attempts on BLE failure
+backoff_base = 1.0     # seconds; exponential: backoff_base * 2^attempt
+connect_timeout = 15.0 # seconds per connection attempt
+
 [agent]
 model = "claude-sonnet-4-20250514"
 ```
 
 Env overrides: `SPIKE_TRANSPORT`, `SPIKE_DEVICE_ADDRESS`, `SPIKE_MODEL`.
+
+### BLE Auto-Reconnect
+
+BleTransport automatically reconnects on send/receive failures using exponential backoff. Configure via `[ble.retry]` in `config.toml`. On disconnect during a command, the error is surfaced to the agent as a tool error result; the next command succeeds if reconnect completed.
+
+### MockTransport Simulation
+
+MockTransport accepts optional parameters for realistic simulation:
+
+- `obstacles`: list of `(x, y, radius)` tuples -- circular obstacles; ultrasonic readings reflect distance to nearest obstacle surface along current heading
+- `color_zones`: list of `(x, y, radius, color_id)` tuples -- READ_COLOR returns the color_id when the robot is inside a zone, else 0
+- `noise`: float (default 0.0) -- when > 0, adds Gaussian noise scaled by this factor to sensor readings (distance, heading, pitch, roll, motor angle)
 
 ## Hardware
 

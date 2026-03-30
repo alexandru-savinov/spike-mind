@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import typing
 
 from spike_mind.protocol import (
@@ -38,36 +39,94 @@ class BleTransport:
     """Real BLE transport using bleak.
 
     Discovers SPIKE hub by service UUID, connects, and communicates
-    via the Pybricks GATT characteristic.
+    via the Pybricks GATT characteristic. Auto-reconnects on failure
+    using exponential backoff.
     """
 
-    def __init__(self, device_address: str = "", timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        device_address: str = "",
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        backoff_base: float = 1.0,
+        connect_timeout: float = 15.0,
+    ) -> None:
         self._device_address = device_address
         self._timeout = timeout
+        self._max_retries = max_retries
+        self._backoff_base = backoff_base
+        self._connect_timeout = connect_timeout
         self._client: typing.Any = None  # BleakClient, lazily imported
+        self._address: str | None = None  # resolved address for reconnect
         self._response_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._reconnecting = False
+        self._bleak_client_cls: type | None = None
+        self._bleak_scanner_cls: type | None = None
 
     async def connect(self) -> None:
         from bleak import BleakClient, BleakScanner
+        await self._connect_impl(BleakClient, BleakScanner)
 
+    async def _connect_impl(
+        self, bleak_client_cls: type, bleak_scanner_cls: type
+    ) -> None:
         if self._device_address:
-            address = self._device_address
-        else:
-            device = await BleakScanner.find_device_by_filter(
+            self._address = self._device_address
+        elif self._address is None:
+            device = await bleak_scanner_cls.find_device_by_filter(
                 lambda d, adv: SERVICE_UUID.lower() in [
                     s.lower() for s in (adv.service_uuids or [])
                 ],
-                timeout=self._timeout,
+                timeout=self._connect_timeout,
             )
             if device is None:
                 raise ConnectionError(
-                    f"No SPIKE hub found (scanned {self._timeout}s for service {SERVICE_UUID})"
+                    f"No SPIKE hub found (scanned {self._connect_timeout}s for service {SERVICE_UUID})"
                 )
-            address = device.address
+            self._address = device.address
 
-        self._client = BleakClient(address)
-        await self._client.connect()
+        self._bleak_client_cls = bleak_client_cls
+        self._bleak_scanner_cls = bleak_scanner_cls
+        self._client = bleak_client_cls(self._address)
+        await asyncio.wait_for(
+            self._client.connect(), timeout=self._connect_timeout
+        )
         await self._client.start_notify(CHAR_UUID, self._on_notification)
+
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect with exponential backoff."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            # Clean up old client
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+                self._client = None
+            # Drain stale notifications from the old connection
+            while not self._response_queue.empty():
+                self._response_queue.get_nowait()
+
+            for attempt in range(self._max_retries):
+                if attempt > 0:
+                    delay = self._backoff_base * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
+                try:
+                    if self._bleak_client_cls is not None and self._bleak_scanner_cls is not None:
+                        await self._connect_impl(self._bleak_client_cls, self._bleak_scanner_cls)
+                    else:
+                        await self.connect()
+                    return  # success
+                except Exception:
+                    if attempt == self._max_retries - 1:
+                        raise ConnectionError(
+                            f"BLE reconnect failed after {self._max_retries} attempts"
+                        )
+        finally:
+            self._reconnecting = False
 
     def _on_notification(self, _sender: int, data: bytearray) -> None:
         """Handle BLE notifications from the hub."""
@@ -81,15 +140,32 @@ class BleTransport:
 
     async def send(self, data: bytes) -> None:
         if not self._client or not self._client.is_connected:
-            raise ConnectionError("Not connected")
-        await self._client.write_gatt_char(
-            CHAR_UUID, PYBRICKS_WRITE_STDIN + data, response=False
-        )
+            await self._reconnect()
+            raise ConnectionError("BLE disconnected, reconnected... retry the command")
+        try:
+            await self._client.write_gatt_char(
+                CHAR_UUID, PYBRICKS_WRITE_STDIN + data, response=False
+            )
+        except Exception:
+            await self._reconnect()
+            raise ConnectionError(
+                "BLE disconnected during send, reconnecting... retry the command"
+            )
 
     async def receive(self) -> bytes:
-        return await asyncio.wait_for(
-            self._response_queue.get(), timeout=self._timeout
-        )
+        try:
+            return await asyncio.wait_for(
+                self._response_queue.get(), timeout=self._timeout
+            )
+        except asyncio.TimeoutError:
+            if self._client and self._client.is_connected:
+                raise TimeoutError(
+                    f"No response within {self._timeout}s (connection still active)"
+                )
+            await self._reconnect()
+            raise ConnectionError(
+                "BLE disconnected during receive, reconnected... retry the command"
+            )
 
 
 class MockTransport:
@@ -99,7 +175,12 @@ class MockTransport:
     Useful for developing and testing the agent loop without hardware.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        obstacles: list[tuple[float, float, float]] | None = None,
+        color_zones: list[tuple[float, float, float, int]] | None = None,
+        noise: float = 0.0,
+    ) -> None:
         self._connected = False
         # Simulated robot state
         self._x = 0.0          # position in mm
@@ -108,6 +189,11 @@ class MockTransport:
         self._left_angle = 0.0 # encoder degrees
         self._turret_angle = 0.0
         self._response_buf: bytes = b""
+        # Environment simulation
+        self._obstacles = obstacles or []  # (x, y, radius) in mm
+        self._color_zones = color_zones or []  # (x, y, radius, color_id) in mm
+        self._noise = noise
+        self._rng = random.Random(42)  # deterministic by default
 
     async def connect(self) -> None:
         self._connected = True
@@ -143,21 +229,40 @@ class MockTransport:
             pass  # Just return state
 
         elif cmd == Command.READ_COLOR:
-            pass  # Return state with mock color (0.0 = none)
+            pass  # Handled in response building below
 
         elif cmd == Command.TURRET:
-            self._turret_angle += value
+            self._turret_angle = value
 
         elif cmd == Command.HEAD_TILT:
             pass  # Simulate tilt (no position change)
 
         # Build response
+        if cmd == Command.READ_COLOR:
+            distance_field = float(self._mock_color_id())
+        else:
+            distance_field = self._mock_distance()
+
+        heading = self._heading
+        tilt_pitch = 0.0
+        tilt_roll = 0.0
+        left_angle = self._left_angle
+
+        # Apply noise if configured (skip distance_field for color reads — it's a categorical ID)
+        if self._noise > 0:
+            if cmd != Command.READ_COLOR:
+                distance_field += self._rng.gauss(0, self._noise)
+            heading += self._rng.gauss(0, self._noise)
+            tilt_pitch += self._rng.gauss(0, self._noise)
+            tilt_roll += self._rng.gauss(0, self._noise)
+            left_angle += self._rng.gauss(0, self._noise)
+
         state = SensorState(
-            distance_cm=self._mock_distance(),
-            heading=self._heading,
-            tilt_pitch=0.0,
-            tilt_roll=0.0,
-            left_angle=self._left_angle,
+            distance_cm=distance_field,
+            heading=heading,
+            tilt_pitch=tilt_pitch,
+            tilt_roll=tilt_roll,
+            left_angle=left_angle,
         )
         import struct as s
         self._response_buf = s.pack(
@@ -177,10 +282,51 @@ class MockTransport:
         return data
 
     def _mock_distance(self) -> float:
-        """Simulate ultrasonic sensor: return 100cm unless near origin."""
-        dist_from_origin = math.sqrt(self._x ** 2 + self._y ** 2)
-        # Simulate: closer to origin = closer to a wall
-        return min(200.0, max(4.0, 100.0 - dist_from_origin / 10))
+        """Simulate ultrasonic sensor: distance to nearest obstacle along heading.
+
+        If obstacles are configured, casts a ray from the robot position along
+        the current heading (plus turret angle) and returns the distance to the
+        nearest obstacle surface in cm. Otherwise falls back to the simple
+        origin-based distance model.
+        """
+        if not self._obstacles:
+            dist_from_origin = math.sqrt(self._x ** 2 + self._y ** 2)
+            return min(200.0, max(4.0, 100.0 - dist_from_origin / 10))
+
+        ray_angle = math.radians(self._heading + self._turret_angle)
+        dx = math.cos(ray_angle)
+        dy = math.sin(ray_angle)
+        min_dist_cm = 200.0  # max sensor range
+
+        for ox, oy, r in self._obstacles:
+            # Vector from robot to obstacle center
+            fx = self._x - ox
+            fy = self._y - oy
+            a = dx * dx + dy * dy  # always 1 for unit direction
+            b = 2 * (fx * dx + fy * dy)
+            c = fx * fx + fy * fy - r * r
+            discriminant = b * b - 4 * a * c
+            if discriminant < 0:
+                continue  # ray misses obstacle
+            sqrt_disc = math.sqrt(discriminant)
+            t1 = (-b - sqrt_disc) / (2 * a)
+            t2 = (-b + sqrt_disc) / (2 * a)
+            # Take the nearest positive intersection (in front of robot)
+            t = t1 if t1 > 0 else t2
+            if t > 0:
+                dist_cm = t / 10.0  # mm to cm
+                min_dist_cm = min(min_dist_cm, dist_cm)
+
+        return max(4.0, min_dist_cm)
+
+    def _mock_color_id(self) -> int:
+        """Return color_id based on robot position within color zones."""
+        for zx, zy, zr, color_id in self._color_zones:
+            dx = self._x - zx
+            dy = self._y - zy
+            if dx * dx + dy * dy <= zr * zr:
+                return color_id
+        return 0  # no color
 
     @property
     def position(self) -> tuple[float, float]:

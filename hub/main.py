@@ -6,6 +6,9 @@ returns sensor state via stdout.
 Command format: struct.pack("!if", cmd_id, value) = 8 bytes
 Response format: struct.pack("!fffff", dist_cm, heading, pitch, roll, left_angle) = 20 bytes
 
+IMPORTANT: Motor commands use run_angle(wait=False) so they don't block
+the main loop. Blocking the loop kills BLE on macOS.
+
 Port assignments:
   A = left wheel motor
   B = head rotation motor
@@ -50,9 +53,9 @@ CMD_TURRET = 6
 CMD_HEAD_TILT = 7
 
 # Watchdog: stop motors if no command received within this many ms
-WATCHDOG_TIMEOUT_MS = 2000
+WATCHDOG_TIMEOUT_MS = 5000
 
-# Color name mapping (Pybricks Color → float ID for transmission)
+# Color name mapping (Pybricks Color -> float ID for transmission)
 COLOR_MAP = {
     Color.NONE: 0.0,
     Color.BLACK: 1.0,
@@ -75,7 +78,7 @@ def read_sensor_state():
     """Pack current sensor state into 20 bytes."""
     return ustruct.pack(
         "!fffff",
-        dist_sensor.distance() / 10,  # mm → cm
+        dist_sensor.distance() / 10,  # mm -> cm
         float(hub.imu.heading()),
         float(hub.imu.tilt()[0]),      # pitch
         float(hub.imu.tilt()[1]),      # roll
@@ -84,37 +87,58 @@ def read_sensor_state():
 
 
 def handle_command(cmd, value):
-    """Execute a command and return response bytes."""
-    if cmd == CMD_STRAIGHT:
-        drive.straight(value)  # value = distance in mm
-    elif cmd == CMD_TURN:
-        drive.turn(value)      # value = angle in degrees
-    elif cmd == CMD_STOP:
+    """Execute a command and return response bytes.
+
+    Motor commands use wait=False so they don't block BLE.
+    Sensor reads return immediately.
+    """
+    try:
+        if cmd == CMD_STRAIGHT:
+            # Non-blocking: start driving, return immediately
+            drive.straight(value, wait=False)
+            # Wait briefly for motion to start, then respond
+            wait(100)
+        elif cmd == CMD_TURN:
+            drive.turn(value, wait=False)
+            wait(100)
+        elif cmd == CMD_STOP:
+            drive.stop()
+            left.stop()
+            right.stop()
+            head_rotation.stop()
+            head_tilt.stop()
+        elif cmd == CMD_READ_DISTANCE:
+            pass  # just return sensor state
+        elif cmd == CMD_READ_COLOR:
+            # Override distance_cm field with color ID in response
+            color = color_sensor.color()
+            color_id = COLOR_MAP.get(color, 0.0)
+            return ustruct.pack(
+                "!fffff",
+                color_id,  # color ID instead of distance
+                float(hub.imu.heading()),
+                float(hub.imu.tilt()[0]),
+                float(hub.imu.tilt()[1]),
+                float(left.angle()),
+            )
+        elif cmd == CMD_TURRET:
+            head_rotation.run_angle(200, value, wait=False)
+            wait(100)
+        elif cmd == CMD_HEAD_TILT:
+            head_tilt.run_angle(200, value, wait=False)
+            wait(100)
+    except Exception:
         drive.stop()
-    elif cmd == CMD_READ_DISTANCE:
-        pass  # just return sensor state
-    elif cmd == CMD_READ_COLOR:
-        # Override distance_cm field with color ID in response
-        color = color_sensor.color()
-        color_id = COLOR_MAP.get(color, 0.0)
-        return ustruct.pack(
-            "!fffff",
-            color_id,  # color ID instead of distance
-            float(hub.imu.heading()),
-            float(hub.imu.tilt()[0]),
-            float(hub.imu.tilt()[1]),
-            float(left.angle()),
-        )
-    elif cmd == CMD_TURRET:
-        head_rotation.run_angle(200, value)  # value = angle in degrees
-    elif cmd == CMD_HEAD_TILT:
-        head_tilt.run_angle(200, value)  # value = angle in degrees
+        hub.light.on(Color.RED)
+        wait(200)
+        hub.light.on(Color.GREEN)
 
     return read_sensor_state()
 
 
-# Main loop
-hub.light.on(Color.GREEN)  # Signal ready
+# Signal ready via text (PC uses read_line() for handshake)
+print("OK")
+hub.light.on(Color.GREEN)
 timer.reset()
 
 while True:
@@ -123,9 +147,10 @@ while True:
         drive.stop()
         head_rotation.stop()
         head_tilt.stop()
-        hub.light.on(Color.ORANGE)  # Visual warning
+        hub.light.on(Color.ORANGE)
 
-    if keyboard.poll(0):
+    # Poll with 100ms timeout — keeps BLE stack alive
+    if keyboard.poll(100):
         data = stdin.buffer.read(8)
         if data and len(data) == 8:
             timer.reset()
@@ -133,5 +158,3 @@ while True:
             cmd, value = ustruct.unpack("!if", data)
             response = handle_command(cmd, value)
             stdout.buffer.write(response)
-    else:
-        wait(1)  # Yield to avoid busy-spinning

@@ -1,8 +1,9 @@
 """Transport layer for SPIKE Prime communication.
 
-Two implementations:
-  BleTransport  — real BLE via bleak
-  MockTransport — in-memory simulation for development without hardware
+Three implementations:
+  PybricksTransport — full lifecycle via pybricksdev (connect + upload + run + I/O)
+  BleTransport      — raw BLE via bleak (requires pre-loaded hub program)
+  MockTransport     — in-memory simulation for development without hardware
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import asyncio
 import math
 import random
 import typing
+from pathlib import Path
 
 from spike_mind.protocol import (
     Command,
@@ -35,8 +37,174 @@ class Transport(typing.Protocol):
     async def receive(self) -> bytes: ...
 
 
+class PybricksTransport:
+    """BLE transport using pybricksdev for full hub lifecycle.
+
+    Handles: BLE discovery → connect → compile & upload hub program →
+    start program → binary stdin/stdout I/O.  This is the recommended
+    transport for real hardware because it manages the entire Pybricks
+    protocol (program download, stdin/stdout framing) correctly.
+
+    Smart connect logic:
+      1. If hub program is already running → just subscribe to stdout
+      2. If program is stored in flash → start it without re-uploading
+      3. Otherwise → full compile + upload + start
+    """
+
+    def __init__(
+        self,
+        hub_name: str = "",
+        hub_program: str = "",
+        timeout: float = 10.0,
+        connect_timeout: float = 15.0,
+        max_retries: int = 3,
+        backoff_base: float = 1.0,
+    ) -> None:
+        self._hub_name = hub_name
+        self._hub_program = hub_program or str(
+            Path(__file__).resolve().parent.parent.parent / "hub" / "main.py"
+        )
+        self._timeout = timeout
+        self._connect_timeout = connect_timeout
+        self._max_retries = max_retries
+        self._backoff_base = backoff_base
+        self._hub: typing.Any = None  # PybricksHubBLE, lazily imported
+        self._response_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._subscription: typing.Any = None  # RxPy Disposable
+        self._reconnecting = False
+
+    def _subscribe_stdout(self) -> None:
+        """Subscribe to hub stdout with thread-safe queue delivery."""
+        loop = asyncio.get_running_loop()
+        self._subscription = self._hub.stdout_observable.subscribe(
+            on_next=lambda data: loop.call_soon_threadsafe(
+                self._response_queue.put_nowait, data
+            )
+        )
+
+    def _is_program_running(self) -> bool:
+        """Check if a user program is currently running on the hub."""
+        from pybricksdev.ble.pybricks import StatusFlag
+        status = self._hub.status_observable.value
+        return bool(status & StatusFlag.USER_PROGRAM_RUNNING)
+
+    async def connect(self) -> None:
+        from pybricksdev.ble import find_device
+        from pybricksdev.connections.pybricks import PybricksHubBLE
+
+        label = f" ({self._hub_name})" if self._hub_name else ""
+        print(f"  scanning for hub{label}...")
+        device = await find_device(self._hub_name or None)
+
+        self._hub = PybricksHubBLE(device)
+        await self._hub.connect()
+        self._hub.print_output = False
+        self._hub._enable_line_handler = False
+        self._subscribe_stdout()
+
+        # Smart connect: skip upload if program is already running or stored
+        if self._is_program_running():
+            print("  hub program already running, skipping upload.")
+            return
+
+        # Try starting stored program (no upload needed)
+        try:
+            print("  starting stored program...")
+            await self._hub.start_user_program()
+            # Give the program a moment to start, then verify
+            await asyncio.sleep(0.5)
+            if self._is_program_running():
+                print("  hub program started from flash.")
+                return
+        except Exception:
+            pass  # No stored program or old firmware — fall through to upload
+
+        # Full upload
+        print(f"  uploading {Path(self._hub_program).name}...")
+        await self._hub.run(
+            self._hub_program,
+            wait=False,
+            print_output=False,
+            line_handler=False,
+        )
+
+    async def disconnect(self) -> None:
+        if self._subscription:
+            self._subscription.dispose()
+            self._subscription = None
+        if self._hub:
+            try:
+                await self._hub.disconnect()
+            except Exception:
+                pass
+            self._hub = None
+
+    async def _reconnect(self) -> None:
+        """Reconnect with exponential backoff."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            await self.disconnect()
+            # Drain stale data
+            while not self._response_queue.empty():
+                self._response_queue.get_nowait()
+
+            for attempt in range(self._max_retries):
+                if attempt > 0:
+                    delay = self._backoff_base * (2 ** (attempt - 1))
+                    print(f"  reconnect attempt {attempt + 1}/{self._max_retries} "
+                          f"(waiting {delay:.1f}s)...")
+                    await asyncio.sleep(delay)
+                try:
+                    await self.connect()
+                    print("  reconnected!")
+                    return
+                except Exception:
+                    if attempt == self._max_retries - 1:
+                        raise ConnectionError(
+                            f"Reconnect failed after {self._max_retries} attempts"
+                        )
+        finally:
+            self._reconnecting = False
+
+    async def send(self, data: bytes) -> None:
+        if not self._hub:
+            await self._reconnect()
+        try:
+            await self._hub.write(data)
+        except Exception:
+            await self._reconnect()
+            raise ConnectionError(
+                "BLE disconnected during send, reconnected... retry the command"
+            )
+
+    async def receive(self) -> bytes:
+        """Receive a complete RESPONSE_SIZE response, reassembling BLE fragments."""
+        buf = b""
+        deadline = asyncio.get_event_loop().time() + self._timeout
+        while len(buf) < RESPONSE_SIZE:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"No complete response within {self._timeout}s "
+                    f"(got {len(buf)}/{RESPONSE_SIZE} bytes)"
+                )
+            try:
+                chunk = await asyncio.wait_for(
+                    self._response_queue.get(), timeout=remaining
+                )
+                buf += chunk
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"No complete response within {self._timeout}s "
+                    f"(got {len(buf)}/{RESPONSE_SIZE} bytes)"
+                )
+        return buf[:RESPONSE_SIZE]
+
+
 class BleTransport:
-    """Real BLE transport using bleak.
+    """Raw BLE transport using bleak (requires hub program already running).
 
     Discovers SPIKE hub by service UUID, connects, and communicates
     via the Pybricks GATT characteristic. Auto-reconnects on failure

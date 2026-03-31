@@ -6,3 +6,5 @@ __pycache__/
 
 # ralphex progress logs
 .ralphex/progress/
+.venv/
+*.egg-info/

@@ -13,7 +13,7 @@ except ImportError:
 
 import os
 
-from spike_mind.transport import BleTransport, MockTransport
+from spike_mind.transport import PybricksTransport, MockTransport
 from spike_mind.robot import Robot
 from spike_mind.agent import run_agent
 
@@ -46,8 +46,9 @@ def make_transport(config: dict):
     elif transport_type == "ble":
         ble_config = config.get("ble", {})
         retry_config = ble_config.get("retry", {})
-        return BleTransport(
-            device_address=ble_config.get("device_address", ""),
+        return PybricksTransport(
+            hub_name=ble_config.get("device_name", ""),
+            hub_program=ble_config.get("hub_program", ""),
             timeout=float(ble_config.get("timeout", 10.0)),
             max_retries=int(retry_config.get("max_retries", 3)),
             backoff_base=float(retry_config.get("backoff_base", 1.0)),
